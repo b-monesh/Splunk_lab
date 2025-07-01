@@ -102,4 +102,161 @@
 #### - `index="<index_name>"`
 ![Splunk](https://github.com/b-monesh/Splunk_lab/blob/main/screenshots/13.png)
 
+---
+
+## 🔎 Using SPL Queries for Threat Detection
+### After successfully forwarding logs from the Ubuntu machine to the Splunk server, the next step was to create custom dashboards that help visualize key security events. These dashboards are designed to assist SOC analysts in quickly identifying suspicious activities, system usage trends, and potential threats. To achieve this, I used SPL (Search Processing Language) — Splunk’s powerful query language — to filter, parse, and present relevant data. Below are some of the key queries I used, along with the types of visualizations created from them.
+
+## 📊 Monitoring SSH Login Attempts 
+### Analyze successful SSH login attempts by parsing `/var/log/auth.log` entries using Splunk. This query helps identify which IP addresses and ports are used most often for SSH access.
+
+### 🧾 Query
+
+#### `index=ubuntu_ source="/var/log/auth.log" "Accepted password" | rex "from (?<src_ip>\d{1,3}(?:\.\d{1,3}){3}) port (?<src_port>\d+)" | stats count as attempts by src_ip, src_port | sort -attempts`
+
+#### 🧠 Parsed and Explained
+
+##### 1. 🔍 `index=ubuntu_ source="/var/log/auth.log" "Accepted password"`
+Searches logs from the `ubuntu_` index, specifically in `/var/log/auth.log`, and filters only lines that contain `"Accepted password"` — these indicate **successful SSH logins using passwords**.
+
+##### 2. 🧪 `| rex "from (?<src_ip>\d{1,3}(?:\.\d{1,3}){3}) port (?<src_port>\d+)"`
+Uses a regular expression to extract:
+
+- `src_ip`: the IP address after the word **from**  
+- `src_port`: the port number after the word **port**
+
+This lets you turn raw log text into **structured fields**.
+
+##### 3. 📈 `| stats count as attempts by src_ip, src_port`
+Counts how many **successful logins** happened from each unique IP and port pair.  
+The result is stored in a new field called `attempts`.
+
+##### 4. 🔽 `| sort -attempts`
+Sorts the final table in **descending order** by the number of login attempts —  
+so the IPs with the most logins show up first.
+
+### 🧪 Test Environment
+
+#### To validate this query, SSH was set up on the Ubuntu machine, and access attempts were made from a Kali Linux system. This generated real-world authentication logs that were ingested into Splunk for analysis.
+
+> ⚠️ The setup process is not covered here to keep the focus on the query and analysis.
+
+![Splunk](https://github.com/b-monesh/Splunk_lab/blob/main/screenshots/14.png)
+
+### Just like we monitored successful SSH logins, we can easily adapt the same SPL structure to detect failed login attempts, which is crucial for identifying brute-force attacks, misconfigured systems, or unauthorized access attempts 
+#### SPL : `index=ubuntu_ source="/var/log/auth.log" "Failed password" | rex "from (?<src_ip>\d{1,3}(?:\.\d{1,3}){3}) port (?<src_port>\d+)" | stats count as attempts by src_ip, src_port | sort -attempts`
+
+## 🔄 Tracking User Switching via su Command
+
+This SPL query helps identify when users switch accounts using the `su` command. In Ubuntu systems, such activity is logged with the phrase `"session opened for user"` in `/var/log/auth.log`
+
+### 🧾 SPL Query
+
+#### SPL : ```index=ubuntu_ source="/var/log/auth.log" "session opened for user" | rex "session opened for user (?<user>\w+)" | stats count by user, host ```
+
+### 🧠 Explanation
+
+- Searches authentication logs for entries where a **new session** has been opened using the `su` command.
+- Extracts the **target username** with `rex` and saves it in the `user` field.
+- Uses `stats` to **count how many times each user was switched into**, grouped by `host`.
+
+### ✅ Use Case
+
+This gives insight into:
+- Which users are being accessed via `su`
+- How frequently this switching happens
+
+### Useful for:
+- 🔐 Auditing privilege usage
+- 🚨 Detecting suspicious account switching
+
+![Splunk](https://github.com/b-monesh/Splunk_lab/blob/main/screenshots/15.png)
+## 👤 Monitoring New User Creation on Ubuntu
+
+This SPL query detects when a **new user account** is created on the system by searching for `"new user"` messages in `/var/log/auth.log`.
+
+### 🧾 SPL Query
+
+SPL : ```index=ubuntu_ source="/var/log/auth.log" "new user"| rex field=_raw "new user: name=(?<user>\w+)"| table _time host user```
+### 🧠 Explanation
+
+- Searches for log entries that mention a **new user being added**.
+- Extracts the `username` from the log using a regular expression (`name=<username>`).
+- Displays a table showing:
+  - `_time`: When the user was created  
+  - `host`: Which machine it happened on  
+  - `user`: The name of the new user
+
+### ✅ Use Case
+
+Helpful for:
+- 🔐 Auditing user creation activity  
+- 🚨 Spotting unauthorized account additions
+
+![Splunk](https://github.com/b-monesh/Splunk_lab/blob/main/screenshots/16.png)
+
+## 🚨 Detecting Port Scanning Attempts
+
+#### This SPL query helps identify potential **port scanning activities** by detecting multiple port access attempts from the same source IP within a short time frame. A port scan typically involves scanning many ports on a target system, and this query highlights such behavior.
+
+### 🧾 SPL Query
+
+#### SPL : ` index=ubuntu_ sourcetype=syslog SRC=* DPT=* | bin _time span=1m | stats dc(DPT) as unique_ports count as attempts by _time, SRC | where unique_ports >= 10 `
+
+### 🧠 Explanation
+
+- Searches for **syslog entries** that include:
+  - `SRC` (source IP)
+  - `DPT` (destination port)
+- Uses `bin _time span=1m` to group data into **1-minute intervals** for time-based analysis.
+- Applies `stats` to:
+  - Count unique destination ports per minute (`dc(DPT)` → `unique_ports`)
+  - Count total connection attempts (`count` → `attempts`)
+  - Grouped by `_time` and `SRC`
+- Filters (`where`) to show only those entries where:
+  - A **single source IP** accessed **10 or more unique ports** within a **1-minute window**
+
+### ✅ Use Case
+
+This query is useful for:
+
+- 🕵️‍♂️ Spotting suspicious scanning activity
+- 🔐 Detecting potential attackers probing for open ports
+- 📊 Investigating abnormal behavior in firewall or syslog data
+
+![Splunk](https://github.com/b-monesh/Splunk_lab/blob/main/screenshots/17.png)
+
+### 🧪 In my case, I simulated this by scanning the Ubuntu machine using nmap from a Kali Linux machine. That’s why the logs showed a high number of unique ports being accessed — matching typical port scanning behavior.
+
+![Splunk](https://github.com/b-monesh/Splunk_lab/blob/main/screenshots/19.png)
+
+
+## 📊 Visualizing with a Dashboard
+
+#### To make this data easier to monitor at a glance, I created a **dashboard** using the same SPL query.
+#### A dashboard helps quickly spot **unusual behavior** like spikes in port scan attempts — without having to run searches manually Everytime.
+
+### 🧩 Why Use a Dashboard?
+
+- 📈 Real-time visibility into suspicious activity
+- 🕒 Time-based charts for identifying spikes and trends
+- 📋 Tables for quick review of source IPs and activity
+- 🚨 Helps SOC teams act on threats faster
+
+#### Dashboards turn raw log data into **actionable insights** using visuals like **time charts**, **bar graphs**, and **dynamic tables** — ideal for security monitoring and reporting.
+
+![Splunk](https://github.com/b-monesh/Splunk_lab/blob/main/screenshots/18.png)
+
+---
+
+# 🔚 Final Thoughts
+## Working on this LAB project helped me understand how logs can reveal real security events like failed logins, new user creation, and port scanning. Using Splunk and SPL gave me practical experience that connects directly to what happens in a real SOC Environment. As a cybersecurity student and enthusiast, learning SIEM tools like Splunk is helping me build a strong foundation. It made me more confident in analyzing data and thinking like a defender — which is a big step forward in my learning journey.
+
+
+
+
+
+
+
+
 
